@@ -9,7 +9,7 @@ st.set_page_config(page_title="English → Tamil Video Dubber", page_icon="🎙�
 
 API = "https://generativelanguage.googleapis.com/v1beta/models/"
 SR = 24000
-CHUNK = 120
+CHUNK = 60
 VOICES = {
     "Charon (deep, calm)": "Charon", "Orus (firm, mature)": "Orus", "Fenrir (excited)": "Fenrir",
     "Algenib (gravelly)": "Algenib", "Alnilam (firm)": "Alnilam", "Iapetus (clear)": "Iapetus",
@@ -41,18 +41,34 @@ def duration(path):
                                           "-of", "default=nw=1:nk=1", path]))
 
 
-def call(model, body, key, note=None, tries=5):
+def call(model, body, key, note=None, tries=8):
     for i in range(tries):
         r = requests.post(f"{API}{model}:generateContent",
                           headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=body, timeout=300)
         if r.ok:
             return r.json()
         if r.status_code == 429 or r.status_code >= 500:
-            wait = 20 * (i + 1)
+            wait = min(20 * (i + 1), 90)
+            try:                                        # honour Google's own retry hint if present
+                import re
+                m = re.search(r'"retryDelay":\s*"(\d+)', r.text)
+                if m:
+                    wait = min(int(m.group(1)) + 3, 120)
+            except Exception:
+                pass
             if note is not None:
-                note.info(f"API busy ({r.status_code}). {wait}s-la retry pannum...")
+                note.info(f"API busy ({r.status_code}) - free limit. {wait}s wait panni retry ({i + 1}/{tries})...")
             time.sleep(wait)
             continue
+        if r.status_code == 404 and "models/" in r.text and not getattr(call, "_retry", False):
+            import re                                   # model retired -> use the one Google suggests
+            m = re.search(r"use models/([\w.\-]+)", r.text)
+            if m and m.group(1) != model:
+                call._retry = True
+                try:
+                    return call(m.group(1), body, key, note, tries)
+                finally:
+                    call._retry = False
         raise RuntimeError(f"API error {r.status_code}: {r.text[:300]}")
     raise RuntimeError("API failed after retries")
 
@@ -172,8 +188,8 @@ with st.sidebar:
                          help="1.3x varai natural-a irukkum. Athukku mela voice vegama theriyum.")
     visuals = st.checkbox("Use video visuals while scripting", value=True)
     make_mp4 = st.checkbox("Also make MP4 (video + Tamil audio)", value=False)
-    text_model = st.text_input("Text model", "gemini-2.5-flash")
-    tts_model = st.text_input("TTS model", "gemini-2.5-flash-preview-tts")
+    text_model = st.text_input("Text model", "gemini-3.8-flash")
+    tts_model = st.text_input("TTS model", "gemini-3.1-flash-tts-preview")
 
 
 def direction(seg_style=""):
